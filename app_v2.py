@@ -869,6 +869,148 @@ Aquí se muestra cómo puedes adaptar la función de carga de archivos para Stre
 
 !pip install streamlit
 
+!pip install streamlit
+import streamlit as st
+import io
+import zipfile
+from pathlib import PurePosixPath
+
+# IMPORTANT: In your actual Streamlit application, the `add_zip_contents` function
+# (from the Colab cell `KJxpszsuClSl`) should be defined or imported in your script.
+# Here, we recreate it nested to demonstrate how it would be integrated.
+
+def streamlit_main_processing():
+    st.title("Cargador de Archivos PDF y ZIP")
+
+    st.markdown("Sube tus archivos PDF o ZIP. Los PDFs dentro de los ZIPs serán extraídos automáticamente.")
+
+    uploaded_files_streamlit = st.file_uploader(
+        "Selecciona uno o más archivos",
+        type=["pdf", "zip"],
+        accept_multiple_files=True
+    )
+
+    if uploaded_files_streamlit:
+        st.write("--- ")
+        st.subheader("Procesando Archivos...")
+
+        # This dictionary will mimic the `uploaded` dictionary from your Colab code,
+        # containing the bytes of the PDFs indexed by their names.
+        processed_pdfs_for_colab_logic = {}
+        total_zip_files_detected = 0
+        current_ignored_files = []
+
+        # Adapted version of `add_zip_contents` for Streamlit
+        # with local variable handling and Streamlit messages.
+        def _adapt_add_zip_contents_for_streamlit(zip_bytes, source_name="archivo.zip", depth=0):
+            nonlocal total_zip_files_detected
+            nonlocal processed_pdfs_for_colab_logic # To modify the external dictionary
+
+            # Assuming MAX_ZIP_DEPTH is 5, as in your original code
+            if depth > 5:
+                st.warning(f"⚠️ Se alcanzó el máximo de ZIP anidados en: {source_name}")
+                return
+
+            try:
+                with zipfile.ZipFile(io.BytesIO(zip_bytes), "r") as z:
+                    for info in z.infolist():
+                        if info.is_dir():
+                            continue
+                        safe_name = str(PurePosixPath(info.filename))
+                        suffix = PurePosixPath(safe_name).suffix.lower()
+
+                        try:
+                            content = z.read(info)
+                        except Exception as e:
+                            st.error(f"⚠️ No se pudo leer '{safe_name}' dentro de {source_name}: {e}")
+                            continue
+
+                        if suffix == ".pdf":
+                            pdf_name = f"{source_name}::{safe_name}"
+                            # Handle duplicate names as in the original logic
+                            base_name = pdf_name
+                            counter = 2
+                            while pdf_name in processed_pdfs_for_colab_logic:
+                                stem = PurePosixPath(base_name).stem
+                                parent = str(PurePosixPath(base_name).parent)
+                                if parent == ".":
+                                    pdf_name = f"{stem}_{counter}.pdf"
+                                else:
+                                    pdf_name = f"{parent}/{stem}_{counter}.pdf"
+                                counter += 1
+                            processed_pdfs_for_colab_logic[pdf_name] = content
+                            st.success(f"  - PDF encontrado: {pdf_name}")
+                        elif suffix == ".zip":
+                            total_zip_files_detected += 1
+                            st.info(f"📦 Procesando ZIP: '{file_name}'...")
+                            _adapt_add_zip_contents_for_streamlit(
+                                content,
+                                source_name=f"{source_name}::{safe_name}",
+                                depth=depth + 1
+                            )
+            except zipfile.BadZipFile:
+                st.error(f"⚠️ El archivo '{source_name}' no es un ZIP válido.")
+            except Exception as e:
+                st.error(f"⚠️ Error procesando ZIP '{source_name}': {e}")
+
+
+        for uploaded_file in uploaded_files_streamlit:
+            file_name = uploaded_file.name
+            file_content_bytes = uploaded_file.read() # Get file content as bytes
+
+            suffix = PurePosixPath(file_name).suffix.lower()
+
+            if suffix == ".pdf":
+                processed_pdfs_for_colab_logic[file_name] = file_content_bytes
+                st.success(f"✅ PDF '{file_name}' listo para procesar.")
+            elif suffix == ".zip":
+                total_zip_files_detected += 1
+                st.info(f"📦 Procesando ZIP: '{file_name}'...")
+                _adapt_add_zip_contents_for_streamlit(
+                    file_content_bytes,
+                    source_name=file_name,
+                    depth=0
+                )
+            else:
+                current_ignored_files.append(file_name)
+                st.warning(f"❌ Archivo '{file_name}' ignorado (tipo no soportado).")
+
+        st.write("--- ")
+        st.subheader("Resumen de Carga Final:")
+        st.success(f"Total de PDFs listos para procesar: {len(processed_pdfs_for_colab_logic)}")
+        st.info(f"Total de ZIPs procesados: {total_zip_files_detected}")
+
+        if current_ignored_files:
+            st.error(f"Archivos ignorados: {', '.join(current_ignored_files)}")
+
+        if processed_pdfs_for_colab_logic:
+            st.write("Lista de PDFs que serán enviados a la lógica de procesamiento principal:")
+            for i, pdf_name in enumerate(processed_pdfs_for_colab_logic.keys(), start=1):
+                st.write(f"  - {i}. {pdf_name}")
+
+            st.markdown(
+                "**Siguiente paso:** El diccionario `processed_pdfs_for_colab_logic` "
+                "contiene todos los PDFs extraídos (tanto individuales como de ZIPs) "
+                "en un formato idéntico al diccionario `uploaded` de tu código de Colab. "
+                "Puedes pasar este diccionario directamente a tu lógica principal de procesamiento "
+                "para generar los reportes."
+                "(e.g., la lógica de la celda `05f915f2` que itera sobre `uploaded.keys()`)"
+            )
+            # This is where you would call your main PDF processing function.
+            # For example:
+            # df_master, df_nok, df_analysis = your_main_processing_function(processed_pdfs_for_colab_logic)
+            # st.dataframe(df_master.head()) # To display some results
+        else:
+            st.warning("No se encontraron PDFs válidos para procesar.")
+
+# This `if __name__ == '__main__':` block is how Streamlit runs the application.
+# It is included here for the completeness of the Streamlit structure,
+# but it will not run a Streamlit application directly within Google Colab.
+if __name__ == '__main__':
+    # To run this in Streamlit, save this code to a .py file (e.g. app.py)
+    # and then run `streamlit run app.py` from your terminal.
+    pass
+
 import streamlit as st
 import io
 import zipfile
