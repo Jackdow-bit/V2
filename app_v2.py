@@ -868,7 +868,6 @@ Aquí se muestra cómo puedes adaptar la función de carga de archivos para Stre
 
 !pip install streamlit
 
-!pip install streamlit
 import streamlit as st
 import io
 import zipfile
@@ -915,6 +914,7 @@ def streamlit_main_processing():
                     for info in z.infolist():
                         if info.is_dir():
                             continue
+
                         safe_name = str(PurePosixPath(info.filename))
                         suffix = PurePosixPath(safe_name).suffix.lower()
 
