@@ -1987,9 +1987,118 @@ This subtask focuses on creating a robust function to handle file uploads, extra
     * Process `.zip` files by recursively calling a helper function (`_add_zip_contents_recursive`) to extract nested PDFs up to `MAX_ZIP_DEPTH`.
     * Employ SHA-256 hashing to deduplicate PDF files based on their content, even if their filenames differ.
     * Return a list of `(pdf_filename, pdf_bytes)` tuples for all unique PDFs, a summary dictionary, and a list of any collection errors.
+"""
 
-**Reasoning**:
+from google.colab import files
+import io
+import zipfile
+from pathlib import PurePosixPath
+
+def collect_pdf_inputs():
+    """
+    Handles file uploads, extracts PDFs from ZIPs, and deduplicates PDFs.
+
+    Returns:
+        tuple: A tuple containing:
+            - list: (filename, bytes_content) tuples for all unique PDFs.
+            - dict: Summary statistics ({'pdfs_loaded': X, 'zips_found': Y, 'ignored_files': Z}).
+            - list: (filename, error_message) tuples for any errors during collection.
+    """
+    print("Por favor, sube tus archivos PDF o ZIP. Puedes subir múltiples.")
+    print(f"Los ZIPs anidados (hasta {MAX_ZIP_DEPTH} niveles) serán procesados automáticamente.")
+    uploaded = files.upload()
+
+    pdf_collection = {} # Stores {SHA256_hash: (filename, bytes_content)}
+    zip_files_found = 0
+    ignored_files = []
+    collection_errors = []
+
+    def _add_zip_contents_recursive(zip_bytes, source_name="archivo.zip", depth=0):
+        nonlocal zip_files_found
+        nonlocal collection_errors
+
+        if depth > MAX_ZIP_DEPTH:
+            collection_errors.append((source_name, f"Max ZIP nesting depth ({MAX_ZIP_DEPTH}) reached."))
+            return
+
+        try:
+            with zipfile.ZipFile(io.BytesIO(zip_bytes), "r") as z:
+                for info in z.infolist():
+                    if info.is_dir():
+                        continue
+
+                    safe_name = str(PurePosixPath(info.filename))
+                    suffix = PurePosixPath(safe_name).suffix.lower()
+                    full_path_name = f"{source_name}::{safe_name}"
+
+                    try:
+                        content = z.read(info)
+                    except Exception as e:
+                        collection_errors.append((full_path_name, f"Could not read content: {e}"))
+                        continue
+
+                    if suffix == ".pdf":
+                        pdf_hash = calculate_sha256(content)
+                        if pdf_hash in pdf_collection:
+                            continue # Skip if already processed
+
+                        # Ensure unique filename for storage (even if content is unique but name isn't)
+                        final_pdf_name = full_path_name
+                        counter = 2
+                        while final_pdf_name in [f[0] for f in pdf_collection.values()]:
+                            stem = PurePosixPath(full_path_name).stem
+                            parent = str(PurePosixPath(full_path_name).parent)
+                            if parent == ".":
+                                final_pdf_name = f"{stem}_{counter}.pdf"
+                            else:
+                                final_pdf_name = f"{parent}/{stem}_{counter}.pdf"
+                            counter += 1
+                        pdf_collection[pdf_hash] = (final_pdf_name, content)
+
+                    elif suffix == ".zip":
+                        zip_files_found += 1
+                        _add_zip_contents_recursive(
+                            content,
+                            source_name=full_path_name,
+                            depth=depth + 1
+                        )
+
+        except zipfile.BadZipFile:
+            collection_errors.append((source_name, "Invalid ZIP file."))
+        except Exception as e:
+            collection_errors.append((source_name, f"Error processing ZIP: {e}"))
+
+    for filename, content in uploaded.items():
+        suffix = PurePosixPath(filename).suffix.lower()
+
+        if suffix == ".pdf":
+            pdf_hash = calculate_sha256(content)
+            if pdf_hash in pdf_collection:
+                continue # Skip if already processed
+            pdf_collection[pdf_hash] = (filename, content)
+        elif suffix == ".zip":
+            zip_files_found += 1
+            _add_zip_contents_recursive(content, source_name=filename)
+        else:
+            ignored_files.append(filename)
+
+    # Convert pdf_collection to the desired list format
+    final_pdfs_to_process = sorted([item for hash_val, item in pdf_collection.items()], key=lambda x: x[0])
+
+    summary = {
+        'pdfs_loaded': len(final_pdfs_to_process),
+        'zips_found': zip_files_found,
+        'ignored_files_count': len(ignored_files),
+        'ignored_files_list': ignored_files
+    }
+    return final_pdfs_to_process, summary, collection_errors
+
+print("The 'collect_pdf_inputs' function has been defined.")
+
+"""**Reasoning**:
 I need to define the global constants and pre-compile regular expressions as specified in the instructions for the 'Define Global Configurations' subtask. This improves efficiency and centralizes control of these values.
+
+
 """
 
 import re
